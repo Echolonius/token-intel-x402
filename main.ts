@@ -18,7 +18,7 @@ const NETWORK = Deno.env.get("X402_NETWORK") ?? "eip155:8453"; // Base mainnet
 const ASSET = Deno.env.get("X402_ASSET") ?? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // USDC
 const AMOUNT = Deno.env.get("X402_AMOUNT") ?? "20000"; // 0.02 USDC
 const FACILITATOR = Deno.env.get("X402_FACILITATOR") ?? "https://facilitator.payai.network";
-const INDEX_HASH = Deno.env.get("X402INDEX_HASH") ?? "";
+const INDEX_HASH = Deno.env.get("X402INDEX_HASH") ?? "dbe4d192e3b36a2a8494005f9f9396ccad725d267f61c7a4a4d00c97d6ed6442";
 const PRICE_USD = 0.02;
 
 const DISCLAIMER =
