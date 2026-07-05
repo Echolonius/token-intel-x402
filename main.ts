@@ -102,7 +102,10 @@ const json = (o: unknown, status = 200, h: Record<string, string> = {}) => new R
 const requirements = () => ({ scheme: "exact", network: NETWORK, amount: AMOUNT, asset: ASSET, payTo: PAY_TO, maxTimeoutSeconds: 300, extra: { name: "USD Coin", version: "2" } });
 const DESC = "Solana token intelligence: fused safety + market read (authorities, holder concentration, dev holdings, organic-score, liquidity) with a synthesized risk verdict.";
 function require402(url: string, error = "Payment required") {
-  return json({ error }, 402, { "PAYMENT-REQUIRED": b64e({ x402Version: 2, error, resource: { url, description: DESC, mimeType: "application/json" }, accepts: [requirements()] }) });
+  // Full x402 v2 document in BOTH body and header: some clients/validators (e.g. x402scan's
+  // probe) parse the JSON body, others read the PAYMENT-REQUIRED header.
+  const doc = { x402Version: 2, error, resource: { url, description: DESC, mimeType: "application/json" }, accepts: [requirements()] };
+  return json(doc, 402, { "PAYMENT-REQUIRED": b64e(doc) });
 }
 // deno-lint-ignore no-explicit-any
 async function facilitator(path: string, paymentPayload: any) {
@@ -159,10 +162,12 @@ Deno.serve(async (req) => {
 
   if (url.pathname === "/api/token-intel") {
     const mint = url.searchParams.get("mint") ?? "";
-    if (!isMint(mint)) return json({ error: 'pass ?mint=<base58 SPL mint>' }, 400);
     const resource = `${url.origin}/api/token-intel`;
+    // Payment challenge FIRST (even on a bare probe with no params) — unpaid callers and
+    // discovery crawlers must always see the 402 requirements, never a 400.
     const header = req.headers.get("PAYMENT-SIGNATURE") ?? req.headers.get("X-PAYMENT");
     if (!header) return require402(resource);
+    if (!isMint(mint)) return json({ error: 'pass ?mint=<base58 SPL mint>' }, 400);
     // deno-lint-ignore no-explicit-any
     let payload: any; try { payload = b64d(header); } catch { return require402(resource, "Malformed payment header"); }
     const v = await facilitator("verify", payload);
