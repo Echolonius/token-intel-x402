@@ -4,7 +4,7 @@ One **keyless** call returns a fused safety + market read on any Solana token �
 authority, top-holder %, dev holdings, wash-trade (organic) score, liquidity, verification — plus
 a **synthesized risk verdict** (`low-risk` / `caution` / `high-risk`) with plain-language flags.
 
-Gated by **x402**: an autonomous agent pays a $0.02 USDC micro-fee per call — **no API key, no
+Gated by **x402**: an autonomous agent pays a $0.01 USDC micro-fee per call (Base or Solana) — **no API key, no
 account, no signup**. That is the differentiator: every rival (RugCheck, Birdeye, SolSniffer,
 GoPlus) needs a key and a signup; this is built for machine-to-machine payment.
 
