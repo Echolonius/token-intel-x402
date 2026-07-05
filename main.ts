@@ -16,10 +16,10 @@
 const PAY_TO = Deno.env.get("X402_PAY_TO") ?? "0xd194AB36E66BccDD80f19b56757CFe52EdEd49af";
 const NETWORK = Deno.env.get("X402_NETWORK") ?? "eip155:8453"; // Base mainnet
 const ASSET = Deno.env.get("X402_ASSET") ?? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"; // USDC
-const AMOUNT = Deno.env.get("X402_AMOUNT") ?? "20000"; // 0.02 USDC
+const AMOUNT = Deno.env.get("X402_AMOUNT") ?? "10000"; // 0.01 USDC
 const FACILITATOR = Deno.env.get("X402_FACILITATOR") ?? "https://facilitator.payai.network";
 const INDEX_HASH = Deno.env.get("X402INDEX_HASH") ?? "dbe4d192e3b36a2a8494005f9f9396ccad725d267f61c7a4a4d00c97d6ed6442";
-const PRICE_USD = 0.02;
+const PRICE_USD = 0.01;
 
 const DISCLAIMER =
   "Informational only, not financial advice, no warranty. Scores are heuristic; verify before transacting.";
@@ -46,10 +46,31 @@ async function dexScreener(mint: string): Promise<any | null> {
   } catch { return null; }
 }
 
+// Third source (keyless): RugCheck summary — LP-lock depth + named risk flags + normalized score
+// (0-100, LOWER is safer). Same contract as dexScreener: any failure → null, never breaks the route.
+// deno-lint-ignore no-explicit-any
+async function rugCheck(mint: string): Promise<any | null> {
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 5000);
+    const r = await fetch(`https://api.rugcheck.xyz/v1/tokens/${mint}/report/summary`, { signal: ctl.signal, headers: { Accept: "application/json" } });
+    clearTimeout(t);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return {
+      scoreNormalised: typeof d?.score_normalised === "number" ? d.score_normalised : null, // lower = safer
+      lpLockedPct: typeof d?.lpLockedPct === "number" ? Math.round(d.lpLockedPct * 10) / 10 : null,
+      // deno-lint-ignore no-explicit-any
+      risks: Array.isArray(d?.risks) ? d.risks.slice(0, 8).map((x: any) => ({ name: String(x?.name ?? ""), level: String(x?.level ?? "") })) : [],
+    };
+  } catch { return null; }
+}
+
 // deno-lint-ignore no-explicit-any
 async function tokenIntel(mint: string): Promise<any> {
   if (!isMint(mint)) throw new Error("invalid mint address");
   const dexP = dexScreener(mint); // fire in parallel; optional
+  const rugP = rugCheck(mint); // fire in parallel; optional
   const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, {
     headers: { Accept: "application/json" },
   });
@@ -108,6 +129,25 @@ async function tokenIntel(mint: string): Promise<any> {
       else green.push("liquidity confirmed by two independent sources");
     }
   }
+  // Fuse RugCheck (third independent source) — LP-lock depth is the classic rug vector the other
+  // two sources don't see. Weighted honestly: unlocked LP mostly matters on young/thin tokens.
+  const rug = await rugP;
+  if (rug) {
+    for (const risk of rug.risks) {
+      if (risk.level === "danger") red.push(`RugCheck flags: ${risk.name}`);
+    }
+    if (rug.scoreNormalised != null) {
+      if (rug.scoreNormalised <= 20) { score += 4; green.push(`RugCheck rates it safe (${rug.scoreNormalised}/100 risk)`); }
+      else if (rug.scoreNormalised >= 60) red.push(`RugCheck rates it risky (${rug.scoreNormalised}/100)`);
+    }
+    if (rug.lpLockedPct != null) {
+      const young = ageDays != null && ageDays < 30;
+      const thin = liq == null || liq < 100000;
+      if (rug.lpLockedPct >= 80) { score += 4; green.push(`${rug.lpLockedPct}% of LP locked/burned (rug-resistant)`); }
+      else if (young && thin && rug.lpLockedPct < 50) red.push(`only ${rug.lpLockedPct}% of LP locked on a young, thin token — classic rug setup`);
+    }
+    if (dex) green.push("risk assessed across three independent sources");
+  }
   score = Math.max(0, Math.min(100, score));
   const verdict = score >= 75 ? "low-risk" : score >= 45 ? "caution" : "high-risk";
 
@@ -117,6 +157,7 @@ async function tokenIntel(mint: string): Promise<any> {
     market: { priceUsd: t.usdPrice ?? null, liquidityUsd: liq, mcap: t.mcap ?? null, fdv: t.fdv ?? null, change24h: t.stats24h?.priceChange ?? null },
     audit: { mintAuthorityDisabled: mintDisabled, freezeAuthorityDisabled: freezeDisabled, topHoldersPercentage: topPct, devBalancePercentage: devPct, organicScore: organic, organicScoreLabel: t.organicScoreLabel ?? null },
     dexScreener: dex,
+    rugCheck: rug,
     safety: { score, verdict, redFlags: red, greenFlags: green },
     disclaimer: DISCLAIMER,
     _generatedAt: new Date().toISOString(),
@@ -153,7 +194,8 @@ const OUTPUT_EXAMPLE = {
   market: { priceUsd: 0.0000079, liquidityUsd: 6100000, mcap: 620000000, fdv: 700000000, change24h: -1.2 },
   audit: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, topHoldersPercentage: 12.1, devBalancePercentage: 0, organicScore: 91, organicScoreLabel: "high" },
   dexScreener: { pairCount: 30, liquidityUsd: 1174297, volume24hUsd: 1492394 },
-  safety: { score: 95, verdict: "low-risk", redFlags: [], greenFlags: ["mint authority renounced (supply is fixed)", "liquidity confirmed by two independent sources"] },
+  rugCheck: { scoreNormalised: 7, lpLockedPct: 3.1, risks: [{ name: "Mutable metadata", level: "warn" }] },
+  safety: { score: 95, verdict: "low-risk", redFlags: [], greenFlags: ["mint authority renounced (supply is fixed)", "risk assessed across three independent sources"] },
 };
 function require402(url: string, error = "Payment required") {
   // Full x402 v2 document in BOTH body and header: some clients/validators (e.g. x402scan's
@@ -194,9 +236,9 @@ const MCP_PROTO = "2025-03-26";
 const mcpTools = (origin: string) => [
   {
     name: "token_intel",
-    title: "Solana token due-diligence (paid, $0.02 USDC on Base via x402)",
+    title: "Solana token due-diligence (paid, $0.01 USDC on Base or Solana via x402)",
     description:
-      `Fused safety + market read on any Solana token: mint/freeze authorities, holder concentration, dev holdings, organic score, liquidity cross-checked across two independent sources, synthesized 0-100 risk verdict. PAID: $0.02 USDC on Base (x402 v2, keyless). To pay: fetch requirements by calling this tool once (returned in-band), settle via an x402 client, then retry with the base64 payment payload either as the '_payment' argument or the X-PAYMENT HTTP header. Try token_intel_demo first — it is free and proves the pipeline live.`,
+      `Fused safety + market read on any Solana token: mint/freeze authorities, holder concentration, dev holdings, organic score, liquidity cross-checked across three independent sources (Jupiter, DexScreener, RugCheck incl. LP-lock depth), synthesized 0-100 risk verdict. PAID: $0.01 USDC on Base or Solana (x402 v2, keyless). To pay: fetch requirements by calling this tool once (returned in-band), settle via an x402 client, then retry with the base64 payment payload either as the '_payment' argument or the X-PAYMENT HTTP header. Try token_intel_demo first — it is free and proves the pipeline live.`,
     inputSchema: {
       type: "object",
       required: ["mint"],
@@ -245,7 +287,7 @@ async function mcpHandle(req: Request, url: URL, msg: any): Promise<{ body?: unk
         protocolVersion: requested,
         capabilities: { tools: {} },
         serverInfo: { name: "token-intel-x402", title: "Solana Token Intelligence", version: "1.0.0" },
-        instructions: "Two tools: token_intel_demo (free, fixed BONK sample proving the full pipeline) and token_intel (any mint, $0.02 USDC on Base via x402 — unpaid calls return payment requirements in-band; retry with the '_payment' argument or X-PAYMENT header).",
+        instructions: "Two tools: token_intel_demo (free, fixed BONK sample proving the full pipeline) and token_intel (any mint, $0.01 USDC on Base or Solana via x402 — unpaid calls return payment requirements in-band; retry with the '_payment' argument or X-PAYMENT header).",
       }),
     };
   }
@@ -326,7 +368,7 @@ Deno.serve(async (req) => {
 > One paid call returns a fused safety + market read on any Solana token — mint/freeze authorities,
 > holder concentration, dev holdings, organic (wash-trade) score, liquidity cross-checked across two
 > independent sources — synthesized into a 0-100 risk score and a low-risk/caution/high-risk verdict.
-> Built for autonomous agents: pay per call ($0.02 USDC on Base or Solana via x402 v2), no API key,
+> Built for autonomous agents: pay per call ($0.01 USDC on Base or Solana via x402 v2), no API key,
 > no account, no signup. ${DISCLAIMER}
 
 ## Try it free first
@@ -355,7 +397,7 @@ Deno.serve(async (req) => {
       name: "Solana Token Intelligence",
       description: DESC,
       url: url.origin,
-      version: "1.1.0",
+      version: "1.2.0",
       provider: { organization: "Echolonius", url: "https://github.com/Echolonius/token-intel-x402" },
       iconUrl: `${url.origin}/favicon.svg`,
       documentationUrl: `${url.origin}/llms.txt`,
@@ -365,7 +407,7 @@ Deno.serve(async (req) => {
       skills: [{
         id: "token_intel",
         name: "Solana token due-diligence",
-        description: `${DESC} Paid: $0.02 USDC on Base or Solana via x402 v2 (keyless). Free demo: GET /api/token-intel/demo or MCP tool token_intel_demo.`,
+        description: `${DESC} Paid: $0.01 USDC on Base or Solana via x402 v2 (keyless). Free demo: GET /api/token-intel/demo or MCP tool token_intel_demo.`,
         tags: ["solana", "token", "rug-check", "due-diligence", "x402", "mcp"],
         examples: ["Is mint DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 safe to trade?"],
       }],
@@ -380,7 +422,7 @@ Deno.serve(async (req) => {
         version: "1.0.0",
         description: DESC,
         contact: { name: "Echolonius", url: "https://github.com/Echolonius/token-intel-x402" },
-        "x-guidance": "Pay-per-call, no account, no API key. GET /api/token-intel?mint=<base58 SPL mint> with an x402 v2 payment (USDC on Base, $0.02). Unpaid calls return 402 with full requirements in body and PAYMENT-REQUIRED header. MCP: POST /mcp (stateless streamable HTTP, no session; tools: token_intel paid, token_intel_demo free; unpaid calls return x402 requirements in-band; pay via '_payment' argument or X-PAYMENT header). Free: GET / (index), GET /healthz, and GET /api/token-intel/demo (fixed BONK sample of the full two-source output).",
+        "x-guidance": "Pay-per-call, no account, no API key. GET /api/token-intel?mint=<base58 SPL mint> with an x402 v2 payment ($0.01 USDC on Base or Solana). Unpaid calls return 402 with full requirements in body and PAYMENT-REQUIRED header. MCP: POST /mcp (stateless streamable HTTP, no session; tools: token_intel paid, token_intel_demo free; unpaid calls return x402 requirements in-band; pay via '_payment' argument or X-PAYMENT header). Free: GET / (index), GET /healthz, and GET /api/token-intel/demo (fixed BONK sample of the full two-source output).",
       },
       servers: [{ url: url.origin }],
       "x-discovery": { contact: { url: "https://github.com/Echolonius/token-intel-x402" } },
@@ -418,7 +460,7 @@ Deno.serve(async (req) => {
   // and it exercises the full intel pipeline in production without touching the paid gate.
   if (url.pathname === "/api/token-intel/demo") {
     try {
-      return json({ ...(await demoReport()), _demo: "free fixed-sample (BONK). Any other mint: GET /api/token-intel?mint=<mint> with x402 payment ($0.02 USDC on Base)." });
+      return json({ ...(await demoReport()), _demo: "free fixed-sample (BONK). Any other mint: GET /api/token-intel?mint=<mint> with x402 payment ($0.01 USDC on Base or Solana)." });
     } catch (e) { return json({ error: (e as Error).message }, 502); }
   }
 
