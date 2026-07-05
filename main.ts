@@ -101,10 +101,38 @@ const json = (o: unknown, status = 200, h: Record<string, string> = {}) => new R
 
 const requirements = () => ({ scheme: "exact", network: NETWORK, amount: AMOUNT, asset: ASSET, payTo: PAY_TO, maxTimeoutSeconds: 300, extra: { name: "USD Coin", version: "2" } });
 const DESC = "Solana token intelligence: fused safety + market read (authorities, holder concentration, dev holdings, organic-score, liquidity) with a synthesized risk verdict.";
+const INPUT_SCHEMA = {
+  type: "object",
+  required: ["mint"],
+  properties: { mint: { type: "string", pattern: "^[1-9A-HJ-NP-Za-km-z]{32,44}$", description: "SPL mint address (base58)" } },
+};
+const OUTPUT_EXAMPLE = {
+  mint: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+  identity: { name: "Bonk", symbol: "Bonk", isVerified: true, tags: ["community"], holderCount: 995000, ageDays: 1290 },
+  market: { priceUsd: 0.0000079, liquidityUsd: 6100000, mcap: 620000000, fdv: 700000000, change24h: -1.2 },
+  audit: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, topHoldersPercentage: 12.1, devBalancePercentage: 0, organicScore: 91, organicScoreLabel: "high" },
+  safety: { score: 92, verdict: "low-risk", redFlags: [], greenFlags: ["mint authority renounced (supply is fixed)"] },
+};
 function require402(url: string, error = "Payment required") {
   // Full x402 v2 document in BOTH body and header: some clients/validators (e.g. x402scan's
-  // probe) parse the JSON body, others read the PAYMENT-REQUIRED header.
-  const doc = { x402Version: 2, error, resource: { url, description: DESC, mimeType: "application/json" }, accepts: [requirements()] };
+  // probe) parse the JSON body, others read the PAYMENT-REQUIRED header. The bazaar extension
+  // carries invocation schemas so agents/marketplaces know what to send and expect back.
+  const doc = {
+    x402Version: 2,
+    error,
+    resource: { url, description: DESC, mimeType: "application/json" },
+    accepts: [requirements()],
+    extensions: {
+      bazaar: {
+        schema: {
+          properties: {
+            input: { properties: { queryParams: INPUT_SCHEMA } },
+            output: { properties: { example: OUTPUT_EXAMPLE } },
+          },
+        },
+      },
+    },
+  };
   return json(doc, 402, { "PAYMENT-REQUIRED": b64e(doc) });
 }
 // deno-lint-ignore no-explicit-any
@@ -118,6 +146,12 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (url.pathname === "/healthz") return json({ ok: true });
+  if (url.pathname === "/favicon.svg" || url.pathname === "/favicon.ico") {
+    return new Response(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#14213d"/><text x="16" y="23" font-size="18" text-anchor="middle" fill="#7df9aa" font-family="monospace">Ti</text></svg>`,
+      { headers: { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400", ...CORS } },
+    );
+  }
   if (url.pathname === "/.well-known/402index-verify.txt") return new Response(INDEX_HASH, { headers: { "Content-Type": "text/plain", ...CORS } });
 
   // Discovery documents (x402scan + any crawler): OpenAPI-first, .well-known fan-out as fallback.
@@ -127,7 +161,13 @@ Deno.serve(async (req) => {
   if (url.pathname === "/openapi.json") {
     return json({
       openapi: "3.0.3",
-      info: { title: "Solana Token Intelligence", version: "1.0.0", description: DESC },
+      info: {
+        title: "Solana Token Intelligence",
+        version: "1.0.0",
+        description: DESC,
+        contact: { name: "Echolonius", url: "https://github.com/Echolonius/token-intel-x402" },
+        "x-guidance": "Pay-per-call, no account, no API key. GET /api/token-intel?mint=<base58 SPL mint> with an x402 v2 payment (USDC on Base, $0.02). Unpaid calls return 402 with full requirements in body and PAYMENT-REQUIRED header. Free: GET / and GET /healthz.",
+      },
       servers: [{ url: url.origin }],
       "x-discovery": { contact: { url: "https://github.com/Echolonius/token-intel-x402" } },
       paths: {
@@ -135,7 +175,7 @@ Deno.serve(async (req) => {
           get: {
             summary: "Fused safety + market read on any Solana token",
             description: DESC,
-            "x-payment-info": { protocols: ["x402"], price: { mode: "fixed", currency: "USD", amount: PRICE_USD.toFixed(2) } },
+            "x-payment-info": { protocols: ["x402"], pricingMode: "fixed", price: PRICE_USD.toFixed(2), currency: "USD" },
             parameters: [{ name: "mint", in: "query", required: true, schema: { type: "string", pattern: "^[1-9A-HJ-NP-Za-km-z]{32,44}$" }, description: "SPL mint address (base58)" }],
             responses: {
               "200": { description: "Token intelligence report (identity, market, audit, safety verdict)" },
