@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.echolonius/token-intel",
+  "name": "io.github.Echolonius/token-intel",
   "title": "Solana Token Intelligence",
   "description": "Solana token due-diligence for AI agents: fused safety+market read, 0-100 risk verdict. x402-paid.",
   "version": "1.1.0",
