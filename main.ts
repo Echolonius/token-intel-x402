@@ -117,6 +117,34 @@ Deno.serve(async (req) => {
   if (url.pathname === "/healthz") return json({ ok: true });
   if (url.pathname === "/.well-known/402index-verify.txt") return new Response(INDEX_HASH, { headers: { "Content-Type": "text/plain", ...CORS } });
 
+  // Discovery documents (x402scan + any crawler): OpenAPI-first, .well-known fan-out as fallback.
+  if (url.pathname === "/.well-known/x402") {
+    return json({ version: 1, resources: [`${url.origin}/api/token-intel`] });
+  }
+  if (url.pathname === "/openapi.json") {
+    return json({
+      openapi: "3.0.3",
+      info: { title: "Solana Token Intelligence", version: "1.0.0", description: DESC },
+      servers: [{ url: url.origin }],
+      "x-discovery": { contact: { url: "https://github.com/Echolonius/token-intel-x402" } },
+      paths: {
+        "/api/token-intel": {
+          get: {
+            summary: "Fused safety + market read on any Solana token",
+            description: DESC,
+            "x-payment-info": { protocols: ["x402"], price: { mode: "fixed", currency: "USD", amount: PRICE_USD.toFixed(2) } },
+            parameters: [{ name: "mint", in: "query", required: true, schema: { type: "string", pattern: "^[1-9A-HJ-NP-Za-km-z]{32,44}$" }, description: "SPL mint address (base58)" }],
+            responses: {
+              "200": { description: "Token intelligence report (identity, market, audit, safety verdict)" },
+              "400": { description: "Invalid mint" },
+              "402": { description: "Payment required — x402 v2 requirements in PAYMENT-REQUIRED header" },
+            },
+          },
+        },
+      },
+    });
+  }
+
   if (url.pathname === "/" ) {
     return json({
       service: "solana-token-intelligence",
