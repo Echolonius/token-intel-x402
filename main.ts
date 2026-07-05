@@ -131,6 +131,16 @@ const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods
 const json = (o: unknown, status = 200, h: Record<string, string> = {}) => new Response(JSON.stringify(o), { status, headers: { "Content-Type": "application/json", ...CORS, ...h } });
 
 const requirements = () => ({ scheme: "exact", network: NETWORK, amount: AMOUNT, asset: ASSET, payTo: PAY_TO, maxTimeoutSeconds: 300, extra: { name: "USD Coin", version: "2" } });
+// Second payment rail: USDC on Solana mainnet (same facilitator, keyless). Solana-native agents
+// are this product's natural buyers — don't force them onto an EVM chain to pay.
+const SOL_NETWORK = Deno.env.get("X402_SOL_NETWORK") ?? "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp";
+const SOL_ASSET = Deno.env.get("X402_SOL_ASSET") ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"; // USDC mint
+const SOL_PAY_TO = Deno.env.get("X402_SOL_PAY_TO") ?? "3wbinZDnWmDxHMLtACNrskwZvRwg4KYbBWw1wuviXXHT"; // receive-only
+const solRequirements = () => ({ scheme: "exact", network: SOL_NETWORK, amount: AMOUNT, asset: SOL_ASSET, payTo: SOL_PAY_TO, maxTimeoutSeconds: 300, extra: { name: "USD Coin" } });
+const allAccepts = () => [requirements(), solRequirements()];
+// Pick the requirements matching the payment payload the buyer actually sent.
+// deno-lint-ignore no-explicit-any
+const requirementsFor = (payload: any) => String(payload?.network ?? payload?.paymentRequirements?.network ?? "").startsWith("solana:") ? solRequirements() : requirements();
 const DESC = "Solana token intelligence: fused safety + market read (authorities, holder concentration, dev holdings, organic-score, liquidity) with a synthesized risk verdict.";
 const INPUT_SCHEMA = {
   type: "object",
@@ -153,7 +163,7 @@ function require402(url: string, error = "Payment required") {
     x402Version: 2,
     error,
     resource: { url, description: DESC, mimeType: "application/json" },
-    accepts: [requirements()],
+    accepts: allAccepts(),
     extensions: {
       bazaar: {
         schema: {
@@ -169,7 +179,7 @@ function require402(url: string, error = "Payment required") {
 }
 // deno-lint-ignore no-explicit-any
 async function facilitator(path: string, paymentPayload: any) {
-  const r = await fetch(`${FACILITATOR}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements: requirements() }) });
+  const r = await fetch(`${FACILITATOR}/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ x402Version: 2, paymentPayload, paymentRequirements: requirementsFor(paymentPayload) }) });
   let data = null; try { data = await r.json(); } catch { /* */ }
   return { ok: r.ok, status: r.status, data };
 }
@@ -256,7 +266,7 @@ async function mcpHandle(req: Request, url: URL, msg: any): Promise<{ body?: unk
         x402Version: 2,
         error,
         resource: { url: resource, description: DESC, mimeType: "application/json" },
-        accepts: [requirements()],
+        accepts: allAccepts(),
       });
       if (!header) {
         const d = doc("Payment required — settle these requirements, then retry with the '_payment' argument or X-PAYMENT header");
@@ -307,6 +317,60 @@ Deno.serve(async (req) => {
   // Discovery documents (x402scan + any crawler): OpenAPI-first, .well-known fan-out as fallback.
   if (url.pathname === "/.well-known/x402") {
     return json({ version: 1, resources: [`${url.origin}/api/token-intel`] });
+  }
+  // llms.txt — plain-language guide for LLM agents (competitor-standard discovery surface).
+  if (url.pathname === "/llms.txt") {
+    return new Response(
+      `# Solana Token Intelligence (token-intel-x402)
+
+> One paid call returns a fused safety + market read on any Solana token — mint/freeze authorities,
+> holder concentration, dev holdings, organic (wash-trade) score, liquidity cross-checked across two
+> independent sources — synthesized into a 0-100 risk score and a low-risk/caution/high-risk verdict.
+> Built for autonomous agents: pay per call ($0.02 USDC on Base or Solana via x402 v2), no API key,
+> no account, no signup. ${DISCLAIMER}
+
+## Try it free first
+- GET ${url.origin}/api/token-intel/demo — full pipeline output for a fixed sample token (BONK), free.
+- MCP: POST ${url.origin}/mcp — tools: token_intel_demo (free), token_intel (paid).
+
+## Paid usage (x402 v2)
+- GET ${url.origin}/api/token-intel?mint=<base58 SPL mint> — unpaid calls return HTTP 402 with full
+  payment requirements (USDC on Base eip155:8453 OR Solana mainnet) in body + PAYMENT-REQUIRED header.
+  Settle via any x402 client, retry with X-PAYMENT header.
+- MCP: call token_intel without payment to receive requirements in-band; retry with the '_payment'
+  argument or X-PAYMENT header.
+
+## Machine-readable
+- OpenAPI: ${url.origin}/openapi.json
+- x402 discovery: ${url.origin}/.well-known/x402
+- A2A agent card: ${url.origin}/.well-known/agent.json
+- Source: https://github.com/Echolonius/token-intel-x402
+`,
+      { headers: { "Content-Type": "text/plain; charset=utf-8", ...CORS } },
+    );
+  }
+  // A2A agent card — lets A2A-speaking agents discover the service as a skill provider.
+  if (url.pathname === "/.well-known/agent.json") {
+    return json({
+      name: "Solana Token Intelligence",
+      description: DESC,
+      url: url.origin,
+      version: "1.1.0",
+      provider: { organization: "Echolonius", url: "https://github.com/Echolonius/token-intel-x402" },
+      iconUrl: `${url.origin}/favicon.svg`,
+      documentationUrl: `${url.origin}/llms.txt`,
+      capabilities: { streaming: false, pushNotifications: false },
+      defaultInputModes: ["application/json"],
+      defaultOutputModes: ["application/json"],
+      skills: [{
+        id: "token_intel",
+        name: "Solana token due-diligence",
+        description: `${DESC} Paid: $0.02 USDC on Base or Solana via x402 v2 (keyless). Free demo: GET /api/token-intel/demo or MCP tool token_intel_demo.`,
+        tags: ["solana", "token", "rug-check", "due-diligence", "x402", "mcp"],
+        examples: ["Is mint DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263 safe to trade?"],
+      }],
+      "x-payment": { protocol: "x402", x402Version: 2, priceUsd: PRICE_USD, networks: [NETWORK, SOL_NETWORK], endpoints: { rest: `${url.origin}/api/token-intel`, mcp: `${url.origin}/mcp` } },
+    });
   }
   if (url.pathname === "/openapi.json") {
     return json({
