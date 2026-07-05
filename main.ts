@@ -28,9 +28,28 @@ const DISCLAIMER =
 
 const isMint = (s: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s);
 
+// Optional second source (keyless). MUST never break the route: any failure → null → Jupiter-only.
+// deno-lint-ignore no-explicit-any
+async function dexScreener(mint: string): Promise<any | null> {
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 5000);
+    const r = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`, { signal: ctl.signal, headers: { Accept: "application/json" } });
+    clearTimeout(t);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const pairs = Array.isArray(d?.pairs) ? d.pairs.filter((p: any) => p?.chainId === "solana") : [];
+    if (!pairs.length) return null;
+    const liq = pairs.reduce((s: number, p: any) => s + (Number(p?.liquidity?.usd) || 0), 0);
+    const vol = pairs.reduce((s: number, p: any) => s + (Number(p?.volume?.h24) || 0), 0);
+    return { pairCount: pairs.length, liquidityUsd: Math.round(liq), volume24hUsd: Math.round(vol) };
+  } catch { return null; }
+}
+
 // deno-lint-ignore no-explicit-any
 async function tokenIntel(mint: string): Promise<any> {
   if (!isMint(mint)) throw new Error("invalid mint address");
+  const dexP = dexScreener(mint); // fire in parallel; optional
   const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${mint}`, {
     headers: { Accept: "application/json" },
   });
@@ -78,6 +97,17 @@ async function tokenIntel(mint: string): Promise<any> {
   }
   if (t.isVerified) { score += 4; green.push("Jupiter-verified token"); }
   if (ageDays != null && ageDays < 2) red.push(`brand new — ${ageDays}d old (highest rug window)`);
+
+  // Cross-check against DexScreener (second independent source) — additive and optional.
+  const dex = await dexP;
+  if (dex) {
+    if (dex.pairCount >= 3) { score += 3; green.push(`liquidity spread across ${dex.pairCount} DEX pairs`); }
+    if (liq != null && dex.liquidityUsd > 0) {
+      const ratio = Math.max(liq, dex.liquidityUsd) / Math.max(1, Math.min(liq, dex.liquidityUsd));
+      if (ratio > 5) red.push(`sources disagree on liquidity 5x+ (Jupiter $${Math.round(liq).toLocaleString()} vs DexScreener $${dex.liquidityUsd.toLocaleString()}) — treat with caution`);
+      else green.push("liquidity confirmed by two independent sources");
+    }
+  }
   score = Math.max(0, Math.min(100, score));
   const verdict = score >= 75 ? "low-risk" : score >= 45 ? "caution" : "high-risk";
 
@@ -86,6 +116,7 @@ async function tokenIntel(mint: string): Promise<any> {
     identity: { name: t.name, symbol: t.symbol, isVerified: !!t.isVerified, tags: t.tags ?? [], holderCount: t.holderCount ?? null, ageDays },
     market: { priceUsd: t.usdPrice ?? null, liquidityUsd: liq, mcap: t.mcap ?? null, fdv: t.fdv ?? null, change24h: t.stats24h?.priceChange ?? null },
     audit: { mintAuthorityDisabled: mintDisabled, freezeAuthorityDisabled: freezeDisabled, topHoldersPercentage: topPct, devBalancePercentage: devPct, organicScore: organic, organicScoreLabel: t.organicScoreLabel ?? null },
+    dexScreener: dex,
     safety: { score, verdict, redFlags: red, greenFlags: green },
     disclaimer: DISCLAIMER,
     _generatedAt: new Date().toISOString(),
@@ -194,10 +225,24 @@ Deno.serve(async (req) => {
       version: "1.0.0",
       what: "One keyless call → fused safety + market read on any Solana token, with a synthesized risk verdict. Built for autonomous agents: pay per call in USDC, no API key, no account.",
       payment: { protocol: "x402", x402Version: 2, priceUsd: PRICE_USD, network: NETWORK, asset: ASSET, payTo: PAY_TO, facilitator: FACILITATOR },
-      usage: 'GET /api/token-intel?mint=<SPL_MINT>  (PAID) · GET /healthz (free)',
+      usage: 'GET /api/token-intel?mint=<SPL_MINT>  (PAID) · GET /api/token-intel/demo (free BONK sample) · GET /healthz (free)',
       example: { mint: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" },
       disclaimer: DISCLAIMER,
     });
+  }
+
+  // Free fixed-sample demo (BONK only, cached 10 min): buyers see real output before paying,
+  // and it exercises the full intel pipeline in production without touching the paid gate.
+  if (url.pathname === "/api/token-intel/demo") {
+    const DEMO_MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"; // BONK
+    const now = Date.now();
+    // deno-lint-ignore no-explicit-any
+    const g = globalThis as any;
+    if (!g.__demoCache || now - g.__demoCache.at > 600_000) {
+      try { g.__demoCache = { at: now, data: await tokenIntel(DEMO_MINT) }; }
+      catch (e) { return json({ error: (e as Error).message }, 502); }
+    }
+    return json({ ...g.__demoCache.data, _demo: "free fixed-sample (BONK). Any other mint: GET /api/token-intel?mint=<mint> with x402 payment ($0.02 USDC on Base)." });
   }
 
   if (url.pathname === "/api/token-intel") {
