@@ -142,7 +142,8 @@ const OUTPUT_EXAMPLE = {
   identity: { name: "Bonk", symbol: "Bonk", isVerified: true, tags: ["community"], holderCount: 995000, ageDays: 1290 },
   market: { priceUsd: 0.0000079, liquidityUsd: 6100000, mcap: 620000000, fdv: 700000000, change24h: -1.2 },
   audit: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, topHoldersPercentage: 12.1, devBalancePercentage: 0, organicScore: 91, organicScoreLabel: "high" },
-  safety: { score: 92, verdict: "low-risk", redFlags: [], greenFlags: ["mint authority renounced (supply is fixed)"] },
+  dexScreener: { pairCount: 30, liquidityUsd: 1174297, volume24hUsd: 1492394 },
+  safety: { score: 95, verdict: "low-risk", redFlags: [], greenFlags: ["mint authority renounced (supply is fixed)", "liquidity confirmed by two independent sources"] },
 };
 function require402(url: string, error = "Payment required") {
   // Full x402 v2 document in BOTH body and header: some clients/validators (e.g. x402scan's
@@ -197,7 +198,7 @@ Deno.serve(async (req) => {
         version: "1.0.0",
         description: DESC,
         contact: { name: "Echolonius", url: "https://github.com/Echolonius/token-intel-x402" },
-        "x-guidance": "Pay-per-call, no account, no API key. GET /api/token-intel?mint=<base58 SPL mint> with an x402 v2 payment (USDC on Base, $0.02). Unpaid calls return 402 with full requirements in body and PAYMENT-REQUIRED header. Free: GET / and GET /healthz.",
+        "x-guidance": "Pay-per-call, no account, no API key. GET /api/token-intel?mint=<base58 SPL mint> with an x402 v2 payment (USDC on Base, $0.02). Unpaid calls return 402 with full requirements in body and PAYMENT-REQUIRED header. Free: GET / (index), GET /healthz, and GET /api/token-intel/demo (fixed BONK sample of the full two-source output).",
       },
       servers: [{ url: url.origin }],
       "x-discovery": { contact: { url: "https://github.com/Echolonius/token-intel-x402" } },
