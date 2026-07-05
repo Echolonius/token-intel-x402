@@ -253,7 +253,7 @@ const mcpTools = (origin: string) => [
   {
     name: "token_intel_demo",
     title: "Free demo — full pipeline, fixed sample (BONK)",
-    description: "Free. Returns the complete two-source intelligence report for a fixed sample token (BONK), exercising the exact production pipeline — verify output quality before paying for token_intel.",
+    description: "Free. Returns the complete three-source intelligence report for a fixed sample token (BONK), exercising the exact production pipeline — verify output quality before paying for token_intel.",
     inputSchema: { type: "object", properties: {} },
     annotations: { readOnlyHint: true, openWorldHint: true },
     _meta: { iconUrl: `${origin}/favicon.svg` },
@@ -422,7 +422,7 @@ Deno.serve(async (req) => {
         version: "1.0.0",
         description: DESC,
         contact: { name: "Echolonius", url: "https://github.com/Echolonius/token-intel-x402" },
-        "x-guidance": "Pay-per-call, no account, no API key. GET /api/token-intel?mint=<base58 SPL mint> with an x402 v2 payment ($0.01 USDC on Base or Solana). Unpaid calls return 402 with full requirements in body and PAYMENT-REQUIRED header. MCP: POST /mcp (stateless streamable HTTP, no session; tools: token_intel paid, token_intel_demo free; unpaid calls return x402 requirements in-band; pay via '_payment' argument or X-PAYMENT header). Free: GET / (index), GET /healthz, and GET /api/token-intel/demo (fixed BONK sample of the full two-source output).",
+        "x-guidance": "Pay-per-call, no account, no API key. GET /api/token-intel?mint=<base58 SPL mint> with an x402 v2 payment ($0.01 USDC on Base or Solana). Unpaid calls return 402 with full requirements in body and PAYMENT-REQUIRED header. MCP: POST /mcp (stateless streamable HTTP, no session; tools: token_intel paid, token_intel_demo free; unpaid calls return x402 requirements in-band; pay via '_payment' argument or X-PAYMENT header). Free: GET / (index), GET /healthz, and GET /api/token-intel/demo (fixed BONK sample of the full three-source output).",
       },
       servers: [{ url: url.origin }],
       "x-discovery": { contact: { url: "https://github.com/Echolonius/token-intel-x402" } },
