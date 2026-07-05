@@ -174,9 +174,127 @@ async function facilitator(path: string, paymentPayload: any) {
   return { ok: r.ok, status: r.status, data };
 }
 
+// ---------- MCP (stateless streamable HTTP) ----------
+// Survey of live x402+MCP services (glim.sh, pyrimid, aigregator, intelica) settled the shape:
+// stateless POST JSON-RPC, no session header required, initialize/tools/list free, and an unpaid
+// paid-tool call returns the full x402 document IN-BAND as the tool result (HTTP 200) so every MCP
+// client surfaces it to the buying agent. We also accept the payment in-band (`_payment` argument)
+// for clients that cannot set HTTP headers — header X-PAYMENT/PAYMENT-SIGNATURE works too.
+const MCP_PROTO = "2025-03-26";
+const mcpTools = (origin: string) => [
+  {
+    name: "token_intel",
+    title: "Solana token due-diligence (paid, $0.02 USDC on Base via x402)",
+    description:
+      `Fused safety + market read on any Solana token: mint/freeze authorities, holder concentration, dev holdings, organic score, liquidity cross-checked across two independent sources, synthesized 0-100 risk verdict. PAID: $0.02 USDC on Base (x402 v2, keyless). To pay: fetch requirements by calling this tool once (returned in-band), settle via an x402 client, then retry with the base64 payment payload either as the '_payment' argument or the X-PAYMENT HTTP header. Try token_intel_demo first — it is free and proves the pipeline live.`,
+    inputSchema: {
+      type: "object",
+      required: ["mint"],
+      properties: {
+        mint: INPUT_SCHEMA.properties.mint,
+        _payment: { type: "string", description: "base64 x402 payment payload (alternative to the X-PAYMENT header)" },
+      },
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    _meta: { iconUrl: `${origin}/favicon.svg` },
+  },
+  {
+    name: "token_intel_demo",
+    title: "Free demo — full pipeline, fixed sample (BONK)",
+    description: "Free. Returns the complete two-source intelligence report for a fixed sample token (BONK), exercising the exact production pipeline — verify output quality before paying for token_intel.",
+    inputSchema: { type: "object", properties: {} },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+    _meta: { iconUrl: `${origin}/favicon.svg` },
+  },
+];
+const rpcResult = (id: unknown, result: unknown) => ({ jsonrpc: "2.0", id, result });
+const rpcError = (id: unknown, code: number, message: string) => ({ jsonrpc: "2.0", id, error: { code, message } });
+const toolText = (o: unknown, extra: Record<string, unknown> = {}) => ({
+  content: [{ type: "text", text: JSON.stringify(o) }],
+  structuredContent: o,
+  ...extra,
+});
+async function demoReport() {
+  const DEMO_MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"; // BONK
+  const now = Date.now();
+  // deno-lint-ignore no-explicit-any
+  const g = globalThis as any;
+  if (!g.__demoCache || now - g.__demoCache.at > 600_000) {
+    g.__demoCache = { at: now, data: await tokenIntel(DEMO_MINT) };
+  }
+  return g.__demoCache.data;
+}
+// deno-lint-ignore no-explicit-any
+async function mcpHandle(req: Request, url: URL, msg: any): Promise<{ body?: unknown; headers?: Record<string, string> }> {
+  const { id, method, params } = msg ?? {};
+  if (typeof method !== "string") return { body: rpcError(id ?? null, -32600, "Invalid request") };
+  if (method === "initialize") {
+    const requested = typeof params?.protocolVersion === "string" ? params.protocolVersion : MCP_PROTO;
+    return {
+      body: rpcResult(id, {
+        protocolVersion: requested,
+        capabilities: { tools: {} },
+        serverInfo: { name: "token-intel-x402", title: "Solana Token Intelligence", version: "1.0.0" },
+        instructions: "Two tools: token_intel_demo (free, fixed BONK sample proving the full pipeline) and token_intel (any mint, $0.02 USDC on Base via x402 — unpaid calls return payment requirements in-band; retry with the '_payment' argument or X-PAYMENT header).",
+      }),
+    };
+  }
+  if (method.startsWith("notifications/")) return {}; // fire-and-forget
+  if (method === "ping") return { body: rpcResult(id, {}) };
+  if (method === "tools/list") return { body: rpcResult(id, { tools: mcpTools(url.origin) }) };
+  if (method === "tools/call") {
+    const name = params?.name;
+    const args = params?.arguments ?? {};
+    if (name === "token_intel_demo") {
+      try { return { body: rpcResult(id, toolText({ ...(await demoReport()), _demo: "free fixed-sample (BONK)" })) }; }
+      catch (e) { return { body: rpcResult(id, toolText({ error: (e as Error).message }, { isError: true })) }; }
+    }
+    if (name === "token_intel") {
+      const resource = `${url.origin}/api/token-intel`;
+      const header = args._payment ?? req.headers.get("PAYMENT-SIGNATURE") ?? req.headers.get("X-PAYMENT");
+      const doc = (error: string) => ({
+        x402Version: 2,
+        error,
+        resource: { url: resource, description: DESC, mimeType: "application/json" },
+        accepts: [requirements()],
+      });
+      if (!header) {
+        const d = doc("Payment required — settle these requirements, then retry with the '_payment' argument or X-PAYMENT header");
+        return { body: rpcResult(id, toolText(d)), headers: { "PAYMENT-REQUIRED": b64e(d) } };
+      }
+      if (!isMint(args.mint ?? "")) return { body: rpcResult(id, toolText({ error: "pass mint=<base58 SPL mint>" }, { isError: true })) };
+      // deno-lint-ignore no-explicit-any
+      let payload: any; try { payload = b64d(header); } catch { return { body: rpcResult(id, toolText(doc("Malformed payment payload"))) }; }
+      const v = await facilitator("verify", payload);
+      if (!v.ok || !v.data?.isValid) return { body: rpcResult(id, toolText(doc(`Payment verification failed: ${v.data?.invalidReason ?? v.status}`))) };
+      let result; try { result = await tokenIntel(args.mint); } catch (e) { return { body: rpcResult(id, toolText({ error: (e as Error).message }, { isError: true })) }; }
+      const s = await facilitator("settle", payload);
+      if (!s.ok || !s.data?.success) return { body: rpcResult(id, toolText(doc(`Settlement failed: ${s.data?.errorReason ?? s.status}`))) };
+      return { body: rpcResult(id, toolText(result)), headers: { "PAYMENT-RESPONSE": b64e(s.data) } };
+    }
+    return { body: rpcError(id, -32602, `Unknown tool: ${String(name)}`) };
+  }
+  return { body: rpcError(id, -32601, `Method not found: ${method}`) };
+}
+
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
+
+  if (url.pathname === "/mcp") {
+    if (req.method !== "POST") return json({ error: "POST JSON-RPC only (stateless streamable HTTP; no SSE stream offered)" }, 405, { "Allow": "POST, OPTIONS" });
+    // deno-lint-ignore no-explicit-any
+    let msg: any; try { msg = await req.json(); } catch { return json(rpcError(null, -32700, "Parse error"), 400); }
+    const msgs = Array.isArray(msg) ? msg : [msg];
+    const outs: unknown[] = []; const hdrs: Record<string, string> = {};
+    for (const m of msgs) {
+      const r = await mcpHandle(req, url, m);
+      if (r.body !== undefined) outs.push(r.body);
+      Object.assign(hdrs, r.headers ?? {});
+    }
+    if (outs.length === 0) return new Response(null, { status: 202, headers: CORS });
+    return json(Array.isArray(msg) ? outs : outs[0], 200, hdrs);
+  }
   if (url.pathname === "/healthz") return json({ ok: true });
   if (url.pathname === "/favicon.svg" || url.pathname === "/favicon.ico") {
     return new Response(
@@ -198,7 +316,7 @@ Deno.serve(async (req) => {
         version: "1.0.0",
         description: DESC,
         contact: { name: "Echolonius", url: "https://github.com/Echolonius/token-intel-x402" },
-        "x-guidance": "Pay-per-call, no account, no API key. GET /api/token-intel?mint=<base58 SPL mint> with an x402 v2 payment (USDC on Base, $0.02). Unpaid calls return 402 with full requirements in body and PAYMENT-REQUIRED header. Free: GET / (index), GET /healthz, and GET /api/token-intel/demo (fixed BONK sample of the full two-source output).",
+        "x-guidance": "Pay-per-call, no account, no API key. GET /api/token-intel?mint=<base58 SPL mint> with an x402 v2 payment (USDC on Base, $0.02). Unpaid calls return 402 with full requirements in body and PAYMENT-REQUIRED header. MCP: POST /mcp (stateless streamable HTTP, no session; tools: token_intel paid, token_intel_demo free; unpaid calls return x402 requirements in-band; pay via '_payment' argument or X-PAYMENT header). Free: GET / (index), GET /healthz, and GET /api/token-intel/demo (fixed BONK sample of the full two-source output).",
       },
       servers: [{ url: url.origin }],
       "x-discovery": { contact: { url: "https://github.com/Echolonius/token-intel-x402" } },
@@ -226,7 +344,7 @@ Deno.serve(async (req) => {
       version: "1.0.0",
       what: "One keyless call → fused safety + market read on any Solana token, with a synthesized risk verdict. Built for autonomous agents: pay per call in USDC, no API key, no account.",
       payment: { protocol: "x402", x402Version: 2, priceUsd: PRICE_USD, network: NETWORK, asset: ASSET, payTo: PAY_TO, facilitator: FACILITATOR },
-      usage: 'GET /api/token-intel?mint=<SPL_MINT>  (PAID) · GET /api/token-intel/demo (free BONK sample) · GET /healthz (free)',
+      usage: 'GET /api/token-intel?mint=<SPL_MINT>  (PAID) · GET /api/token-intel/demo (free BONK sample) · POST /mcp (MCP server: token_intel + free token_intel_demo) · GET /healthz (free)',
       example: { mint: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263" },
       disclaimer: DISCLAIMER,
     });
@@ -235,15 +353,9 @@ Deno.serve(async (req) => {
   // Free fixed-sample demo (BONK only, cached 10 min): buyers see real output before paying,
   // and it exercises the full intel pipeline in production without touching the paid gate.
   if (url.pathname === "/api/token-intel/demo") {
-    const DEMO_MINT = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"; // BONK
-    const now = Date.now();
-    // deno-lint-ignore no-explicit-any
-    const g = globalThis as any;
-    if (!g.__demoCache || now - g.__demoCache.at > 600_000) {
-      try { g.__demoCache = { at: now, data: await tokenIntel(DEMO_MINT) }; }
-      catch (e) { return json({ error: (e as Error).message }, 502); }
-    }
-    return json({ ...g.__demoCache.data, _demo: "free fixed-sample (BONK). Any other mint: GET /api/token-intel?mint=<mint> with x402 payment ($0.02 USDC on Base)." });
+    try {
+      return json({ ...(await demoReport()), _demo: "free fixed-sample (BONK). Any other mint: GET /api/token-intel?mint=<mint> with x402 payment ($0.02 USDC on Base)." });
+    } catch (e) { return json({ error: (e as Error).message }, 502); }
   }
 
   if (url.pathname === "/api/token-intel") {
