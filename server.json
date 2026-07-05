@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.echolonius/token-intel",
+  "title": "Solana Token Intelligence",
+  "description": "Solana token due-diligence for AI agents: fused safety + market read (authorities, holder concentration, dev holdings, organic score, two-source liquidity cross-check) with a 0-100 risk verdict. Free demo tool; paid tool settles $0.02 USDC on Base or Solana via x402 — no API key, no account.",
+  "version": "1.1.0",
+  "websiteUrl": "https://token-intel-x402.echolonius.deno.net/llms.txt",
+  "repository": {
+    "url": "https://github.com/Echolonius/token-intel-x402",
+    "source": "github"
+  },
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://token-intel-x402.echolonius.deno.net/mcp"
+    }
+  ]
+}
