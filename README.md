@@ -1,5 +1,9 @@
 # token-intel-x402 — agent-native Solana token intelligence
 
+> **Status: offline (October 2026).** The hosted service is no longer running, and its endpoints
+> return errors. It earned no paid calls during its run, and free traffic kept exceeding the
+> host's free-tier limits. The code stays here as a reference; you're welcome to self-host it.
+
 One **keyless** call returns a fused safety + market read on any Solana token — mint/freeze
 authority, top-holder %, dev holdings, wash-trade (organic) score, liquidity, verification — plus
 a **synthesized risk verdict** (`low-risk` / `caution` / `high-risk`) with plain-language flags.
