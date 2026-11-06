@@ -7,14 +7,27 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      id-token: write # OIDC auth to the MCP registry (io.github.echolonius namespace)
+      id-token: write # OIDC auth to the MCP registry (io.github.Echolonius namespace)
       contents: read
+    env:
+      # Pinned mcp-publisher release. The hash is the linux_amd64 line of that release's
+      # registry_1.8.7_checksums.txt. To upgrade, change both values together.
+      MCP_PUBLISHER_VERSION: v1.8.7
+      MCP_PUBLISHER_SHA256: 00b21004149a4ce66f0782508ae4a2bce67d1bea395a8da0bd8028159fb59579
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Install mcp-publisher
+      - name: Install mcp-publisher (pinned, checksum-verified)
         run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz # ubuntu-latest runners are x86_64
+          curl --fail --location --silent --show-error --output "$archive" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
+          echo "${MCP_PUBLISHER_SHA256}  ${archive}" | sha256sum --check --strict
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive"
 
       - name: Login (GitHub OIDC)
         run: ./mcp-publisher login github-oidc
