@@ -40,3 +40,7 @@ There are no default pay-to wallets: the server refuses to start until `X402_PAY
 `X402_SOL_PAY_TO` (Solana) are set to your own receive-only addresses. Then run `deno task dev`.
 
 _Informational only, not financial advice, no warranty._
+
+## License
+
+MIT. See [LICENSE](LICENSE).
