@@ -3,7 +3,12 @@
 **This service is retired and offline.** The hosted API and its MCP endpoint stopped working in
 October 2026 and no longer take requests or payments. This repository stays up only as reference
 code.
-The manual [registry-status workflow](.github/workflows/registry-status.yml) hides its MCP Registry entry (`deleted`) or restores it (`active`).
+
+Its entry in the official MCP Registry (`io.github.Echolonius/token-intel`) has been hidden
+(status `deleted`) since 2026-11-06. That was done with the manual
+[registry-status workflow](.github/workflows/registry-status.yml), which can also restore it
+(`active`). The [Publish to MCP Registry](.github/workflows/publish-mcp.yml) workflow is disabled,
+so the retired server isn't re-listed by accident.
 
 The service earned no paid calls during its run, and free traffic kept exceeding the host's
 free-tier limits. You're welcome to read the code or run your own copy.
