@@ -1,0 +1,64 @@
+name: Set MCP Registry status
+run-name: "Set MCP Registry status: ${{ inputs.status }}"
+
+# Manual only. Sets the status of every published version of
+# io.github.Echolonius/token-intel in the official MCP Registry:
+#   deleted    - hidden from registry listings (reversible)
+#   deprecated - still listed, marked deprecated
+#   active     - listed normally; run with this to undo (the message is not sent)
+
+on:
+  workflow_dispatch:
+    inputs:
+      status:
+        description: "New status for all versions (active undoes deleted)"
+        type: choice
+        options:
+          - deleted
+          - deprecated
+          - active
+        default: deleted
+      message:
+        description: "Status message (not sent for active)"
+        type: string
+        default: "Retired: offline since October 2026."
+
+permissions:
+  contents: read
+  id-token: write # OIDC auth to the MCP registry (io.github.Echolonius namespace)
+
+jobs:
+  set-status:
+    runs-on: ubuntu-latest
+    env:
+      # Same pinned mcp-publisher release and checksum as publish-mcp.yml. The hash is the
+      # linux_amd64 line of that release's registry_1.8.7_checksums.txt. Change both together.
+      MCP_PUBLISHER_VERSION: v1.8.7
+      MCP_PUBLISHER_SHA256: 00b21004149a4ce66f0782508ae4a2bce67d1bea395a8da0bd8028159fb59579
+      SERVER_NAME: io.github.Echolonius/token-intel
+    steps:
+      - name: Install mcp-publisher (pinned, checksum-verified)
+        run: |
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz # ubuntu-latest runners are x86_64
+          curl --fail --location --silent --show-error --output "$archive" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/${archive}"
+          echo "${MCP_PUBLISHER_SHA256}  ${archive}" | sha256sum --check --strict
+          tar xzf "$archive" mcp-publisher
+          rm -f "$archive"
+
+      - name: Login (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Set status on all versions
+        env:
+          STATUS: ${{ inputs.status }}
+          MESSAGE: ${{ inputs.message }}
+        run: |
+          set -euo pipefail
+          args=(--status "$STATUS" --all-versions --yes)
+          # The registry rejects a status message when the new status is "active".
+          if [ "$STATUS" != "active" ] && [ -n "$MESSAGE" ]; then
+            args+=(--message "$MESSAGE")
+          fi
+          ./mcp-publisher status "${args[@]}" "$SERVER_NAME"

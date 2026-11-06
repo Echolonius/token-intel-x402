@@ -3,6 +3,7 @@
 **This service is retired and offline.** The hosted API and its MCP endpoint stopped working in
 October 2026 and no longer take requests or payments. This repository stays up only as reference
 code.
+The manual [registry-status workflow](.github/workflows/registry-status.yml) hides its MCP Registry entry (`deleted`) or restores it (`active`).
 
 The service earned no paid calls during its run, and free traffic kept exceeding the host's
 free-tier limits. You're welcome to read the code or run your own copy.
