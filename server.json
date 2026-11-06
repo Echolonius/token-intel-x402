@@ -2,9 +2,9 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.Echolonius/token-intel",
   "title": "Solana Token Intelligence",
-  "description": "Solana token due-diligence: 3-source fused risk verdict incl. LP-lock depth. $0.01 via x402.",
+  "description": "Retired, offline since October 2026; takes no calls or payments. Solana token risk-check code.",
   "version": "1.2.0",
-  "websiteUrl": "https://token-intel-x402.echolonius.deno.net/llms.txt",
+  "websiteUrl": "https://github.com/Echolonius/token-intel-x402",
   "repository": {
     "url": "https://github.com/Echolonius/token-intel-x402",
     "source": "github"
