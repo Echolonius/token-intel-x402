@@ -1,21 +1,29 @@
-# token-intel-x402 — agent-native Solana token intelligence
+# token-intel-x402 (retired)
 
-> **Status: offline (October 2026).** The hosted service is no longer running, and its endpoints
-> return errors. It earned no paid calls during its run, and free traffic kept exceeding the
-> host's free-tier limits. The code stays here as a reference; you're welcome to self-host it.
+**This service is retired and offline.** The hosted API and its MCP endpoint stopped working in
+October 2026 and no longer take requests or payments. This repository stays up only as reference
+code.
 
-One **keyless** call returns a fused safety + market read on any Solana token — mint/freeze
+The service earned no paid calls during its run, and free traffic kept exceeding the host's
+free-tier limits. You're welcome to read the code or run your own copy.
+
+## What it did
+
+One **keyless** call returned a fused safety + market read on any Solana token — mint/freeze
 authority, top-holder %, dev holdings, wash-trade (organic) score, liquidity, verification — plus
 a **synthesized risk verdict** (`low-risk` / `caution` / `high-risk`) with plain-language flags.
 
-Gated by **x402**: an autonomous agent pays a $0.01 USDC micro-fee per call (Base or Solana) — **no API key, no
-account, no signup**. That is the differentiator: every rival (RugCheck, Birdeye, SolSniffer,
-GoPlus) needs a key and a signup; this is built for machine-to-machine payment.
+Calls were paid per use with **x402**: an autonomous agent paid a $0.01 USDC micro-fee per call
+(Base or Solana), with no API key, account or signup.
+
+Main routes in `main.ts` (they only work if you run it yourself):
 
 ```
-GET /api/token-intel?mint=<SPL_MINT>   # PAID (x402) → JSON intelligence
-GET /                                  # free: what it is + how to pay
-GET /healthz                           # free
+GET  /api/token-intel?mint=<SPL_MINT>   # paid (x402) → JSON intelligence
+GET  /api/token-intel/demo              # free: fixed sample (BONK)
+POST /mcp                               # MCP: token_intel (paid), token_intel_demo (free)
+GET  /                                  # free: what it is + how to pay
+GET  /healthz                           # free
 ```
 
 ### Security by design
