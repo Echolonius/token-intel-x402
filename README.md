@@ -34,4 +34,9 @@ GET  /healthz                           # free
 - Every paid call requires payment first, so abuse costs the attacker money.
 - Input strictly validated (base58 mint) — no SSRF/injection.
 
+## Running your own copy
+
+There are no default pay-to wallets: the server refuses to start until `X402_PAY_TO` (Base) and
+`X402_SOL_PAY_TO` (Solana) are set to your own receive-only addresses. Then run `deno task dev`.
+
 _Informational only, not financial advice, no warranty._
